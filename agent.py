@@ -1,62 +1,55 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-
+import time
 from dotenv import load_dotenv
-from livekit.agents import JobContext, WorkerOptions, cli, llm
-from livekit.agents.voice_pipeline import VoicePipelineAgent
-from livekit.plugins import openai, silero, deepgram, cartesia
+
+# Core SDK and Plugins
+from livekit.agents import JobContext, WorkerOptions, cli, AgentSession, Agent
+from livekit.plugins import google, silero, deepgram, cartesia
 
 load_dotenv()
 logger = logging.getLogger("voice-agent")
 
 async def entrypoint(ctx: JobContext):
-    initial_ctx = llm.ChatContext().append(
-        role="system",
-        text="You are a helpful voice assistant. Keep your responses concise.",
-    )
-
-    # Initialize the Agent with high-performance plugins
-    agent = VoicePipelineAgent(
-        vad=silero.VAD.load(),
+    # 2026 UPGRADE: Using gemini-2.0-flash to avoid 404/Retirement errors
+    session = AgentSession(
         stt=deepgram.STT(),
-        llm=openai.LLM(),
+        llm=google.LLM(model="gemini-2.0-flash"), 
         tts=cartesia.TTS(),
-        chat_ctx=initial_ctx,
-        # A. NO OVERLAP: 
-        # This setting ensures the agent cuts off immediately when user speech is detected.
-        interrupt_speech_duration=0.4, 
+        vad=silero.VAD.load(),
     )
 
-    # State tracking for silence handling
-    last_interaction_time = datetime.now()
+    agent = Agent(
+        instructions="You are a helpful, brief voice AI. Answer concisely.",
+    )
 
-    @agent.on("user_started_speaking")
-    def _user_started():
-        nonlocal last_interaction_time
-        last_interaction_time = datetime.now()
+    last_interaction = time.time()
 
-    # B. SILENCE HANDLING:
-    # A background task that checks for inactivity
-    async def silence_monitor():
-        nonlocal last_interaction_time
+    @session.on("user_started_speaking")
+    def _on_user_speech():
+        nonlocal last_interaction
+        last_interaction = time.time()
+
+    # Silence Handling: 20s Reminder
+    async def monitor_silence():
+        nonlocal last_interaction
         while True:
             await asyncio.sleep(5)
-            idle_time = (datetime.now() - last_interaction_time).total_seconds()
-            
-            if idle_time >= 20:
-                # Play a short reminder and reset the timer
-                await agent.say("I'm still here if you need anything!", allow_interruptions=True)
-                last_interaction_time = datetime.now()
+            if time.time() - last_interaction >= 20:
+                # Use generate_reply for proactive follow-up
+                await session.generate_reply(instructions="Friendly reminder that you are still here.")
+                last_interaction = time.time()
 
     await ctx.connect()
-    agent.start(ctx.room)
     
-    # Start the silence watcher
-    asyncio.create_task(silence_monitor())
+    # Start the session
+    await session.start(agent=agent, room=ctx.room)
     
-    # Initial greeting
-    await agent.say("Hello! I am joined and listening.", allow_interruptions=True)
+    # Run the silence monitor in the background
+    asyncio.create_task(monitor_silence())
+    
+    # Initial greeting to confirm connection
+    await session.generate_reply(instructions="Greet the user and say 'I am connected and ready.'")
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

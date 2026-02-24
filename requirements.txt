@@ -1,17 +1,6 @@
-# Core SDK
-livekit-agents>=0.8.0
-
-# VAD (Voice Activity Detection)
+livekit-agents>=1.4.3
+livekit-plugins-google>=0.6.0
 livekit-plugins-silero>=0.6.0
-
-# STT (Speech-to-Text) 
 livekit-plugins-deepgram>=0.6.0
-
-# LLM (Large Language Model)
-livekit-plugins-openai>=0.6.0
-
-# TTS (Text-to-Speech)
 livekit-plugins-cartesia>=0.6.0
-
-# Utilities
 python-dotenv>=1.0.0
